@@ -71,6 +71,7 @@ type ControlledAgentStatusBarProps = {
   providerDefinitions?: AgentProviderDefinition[];
   allProviderModels?: Map<string, AgentModelDefinition[]>;
   canSelectModelProvider?: (providerId: string) => boolean;
+  onSelectProviderAndModel?: (provider: AgentProvider, modelId: string) => void;
   favoriteKeys?: Set<string>;
   onToggleFavoriteModel?: (provider: string, modelId: string) => void;
 };
@@ -160,6 +161,7 @@ function ControlledStatusBar({
   providerDefinitions,
   allProviderModels,
   canSelectModelProvider,
+  onSelectProviderAndModel,
   favoriteKeys = new Set<string>(),
   onToggleFavoriteModel,
 }: ControlledAgentStatusBarProps) {
@@ -490,6 +492,10 @@ function ControlledStatusBar({
                   selectedModel={selectedModelId ?? ""}
                   canSelectProvider={canSelectProviderInModelMenu}
                   onSelect={(selectedProviderId, modelId) => {
+                    if (selectedProviderId !== provider && onSelectProviderAndModel) {
+                      onSelectProviderAndModel(selectedProviderId, modelId);
+                      return;
+                    }
                     if (selectedProviderId !== provider) {
                       onSelectProvider?.(selectedProviderId);
                     }
@@ -874,6 +880,7 @@ export function DraftAgentStatusBar({
       provider={selectedProvider}
       providerDefinitions={providerDefinitions}
       allProviderModels={allProviderModels}
+      onSelectProviderAndModel={onSelectProviderAndModel}
       modeOptions={mappedModeOptions}
       selectedModeId={effectiveSelectedMode}
       onSelectMode={onSelectMode}
