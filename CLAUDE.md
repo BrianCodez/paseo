@@ -46,6 +46,53 @@ See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for full setup, build sync requir
 - **NEVER add auth checks to tests** — agent providers handle their own auth.
 - **Always run typecheck after every change.**
 
+## Fork maintenance
+
+This repo may be maintained on a personal fork with a small hardening patch stack on a dedicated branch such as `security-hardening`.
+
+- Treat `upstream` as the source project and `origin` as the personal fork.
+- Keep the hardening branch small and focused. Prefer one commit per concern.
+- Do not mix unrelated feature work into the hardening branch.
+- If upstream lands an equivalent fix, drop the local patch instead of reimplementing it.
+
+When updating the hardening branch:
+
+```bash
+git status --short --branch
+git remote -v
+git branch --show-current
+git fetch upstream
+git checkout security-hardening
+git rebase upstream/main
+```
+
+After rebases or security edits, run this repo's required verification:
+
+```bash
+npm run build --workspace=@getpaseo/highlight
+npx vitest run packages/server/src/server/file-explorer/service.test.ts packages/server/src/server/websocket-server.relay-reconnect.test.ts
+npm run typecheck
+```
+
+When pushing a rebased hardening branch, use:
+
+```bash
+git push --force-with-lease
+```
+
+When creating it for the first time, use:
+
+```bash
+git push -u origin security-hardening
+```
+
+Conflict rule:
+- Prefer upstream structure.
+- Reapply only the minimum local logic needed to preserve the hardening behavior.
+- Re-check auth, relay, file access, shell execution, and desktop bridge code if upstream changed those areas.
+
+If a `PATCHES.md` file exists, read it before rebasing or editing the hardening branch.
+
 ## Debugging
 
 
