@@ -3652,6 +3652,7 @@ export class Session {
     const { cwd, branchName, requestId } = msg;
 
     try {
+      this.assertSafeGitRef(branchName, "branch");
       const resolvedCwd = expandTilde(cwd);
 
       // Try local branch first

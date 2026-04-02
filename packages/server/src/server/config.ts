@@ -21,6 +21,7 @@ export type CliConfigOverrides = Partial<{
   relayEnabled: boolean;
   mcpEnabled: boolean;
   allowedHosts: AllowedHostsConfig;
+  allowRemoteDirectConnections: boolean;
 }>;
 
 const OptionalVoiceLlmProviderSchema = z
@@ -68,6 +69,9 @@ export function loadConfig(
   const mcpEnabled = options?.cli?.mcpEnabled ?? persisted.daemon?.mcp?.enabled ?? true;
 
   const relayEnabled = options?.cli?.relayEnabled ?? persisted.daemon?.relay?.enabled ?? true;
+  const allowRemoteDirectConnections =
+    options?.cli?.allowRemoteDirectConnections ??
+    env.PASEO_ALLOW_REMOTE_DIRECT_CONNECTIONS === "1";
 
   const relayEndpoint =
     env.PASEO_RELAY_ENDPOINT ?? persisted.daemon?.relay?.endpoint ?? DEFAULT_RELAY_ENDPOINT;
@@ -105,6 +109,7 @@ export function loadConfig(
     staticDir: "public",
     agentClients: {},
     relayEnabled,
+    allowRemoteDirectConnections,
     relayEndpoint,
     relayPublicEndpoint,
     appBaseUrl,

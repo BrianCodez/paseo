@@ -3,6 +3,7 @@ import { createServer as createHTTPServer } from "http";
 import { createReadStream, unlinkSync, existsSync } from "fs";
 import { stat } from "fs/promises";
 import { randomUUID } from "node:crypto";
+import net from "node:net";
 import { hostname as getHostname } from "node:os";
 import path from "node:path";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -164,6 +165,7 @@ export type PaseoDaemonConfig = {
   paseoHome: string;
   corsAllowedOrigins: string[];
   allowedHosts?: AllowedHostsConfig;
+  allowRemoteDirectConnections?: boolean;
   mcpEnabled?: boolean;
   staticDir: string;
   mcpDebug: boolean;
@@ -194,6 +196,23 @@ export interface PaseoDaemon {
   getListenTarget(): ListenTarget | null;
 }
 
+function isLoopbackRemoteAddress(remoteAddress: string | undefined): boolean {
+  if (!remoteAddress) {
+    return false;
+  }
+  const normalized = remoteAddress.trim();
+  if (!normalized) {
+    return false;
+  }
+  if (normalized === "::1") {
+    return true;
+  }
+  if (normalized.startsWith("::ffff:")) {
+    return normalized.slice("::ffff:".length) === "127.0.0.1";
+  }
+  return net.isIP(normalized) !== 0 && normalized === "127.0.0.1";
+}
+
 export async function createPaseoDaemon(
   config: PaseoDaemonConfig,
   rootLogger: Logger,
@@ -217,6 +236,23 @@ export async function createPaseoDaemon(
 
     const app = express();
     let boundListenTarget: ListenTarget | null = null;
+    const requireLocalDirectConnections =
+      listenTarget.type === "tcp" && !config.allowRemoteDirectConnections;
+    const requireLocalDirectRequest: express.RequestHandler = (req, res, next) => {
+      if (!requireLocalDirectConnections || isLoopbackRemoteAddress(req.socket.remoteAddress)) {
+        next();
+        return;
+      }
+
+      logger.warn(
+        {
+          path: req.path,
+          remoteAddress: req.socket.remoteAddress,
+        },
+        "Rejected non-local direct request",
+      );
+      res.status(403).json({ error: "Direct access is limited to local connections" });
+    };
 
     // Host allowlist / DNS rebinding protection (vite-like semantics).
     // For non-TCP (unix sockets), skip host validation.
@@ -282,7 +318,7 @@ export async function createPaseoDaemon(
       });
     });
 
-    app.get("/pairing", async (_req, res) => {
+    app.get("/pairing", requireLocalDirectRequest, async (_req, res) => {
       try {
         const offer = await generateLocalPairingOffer({
           paseoHome: config.paseoHome,
@@ -561,9 +597,9 @@ export async function createPaseoDaemon(
         }
       };
 
-      app.post(agentMcpRoute, handleAgentMcpRequest);
-      app.get(agentMcpRoute, handleAgentMcpRequest);
-      app.delete(agentMcpRoute, handleAgentMcpRequest);
+      app.post(agentMcpRoute, requireLocalDirectRequest, handleAgentMcpRequest);
+      app.get(agentMcpRoute, requireLocalDirectRequest, handleAgentMcpRequest);
+      app.delete(agentMcpRoute, requireLocalDirectRequest, handleAgentMcpRequest);
       logger.info({ route: agentMcpRoute }, "Agent MCP server mounted on main app");
     } else {
       logger.info("Agent MCP HTTP endpoint disabled");
@@ -604,7 +640,11 @@ export async function createPaseoDaemon(
       downloadTokenStore,
       config.paseoHome,
       createInMemoryAgentMcpTransport,
-      { allowedOrigins, allowedHosts: config.allowedHosts },
+      {
+        allowedOrigins,
+        allowedHosts: config.allowedHosts,
+        requireLocalConnections: requireLocalDirectConnections,
+      },
       speechService,
       terminalManager,
       {

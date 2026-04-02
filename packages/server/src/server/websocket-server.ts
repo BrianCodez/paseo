@@ -1,5 +1,6 @@
 import { WebSocketServer } from "ws";
 import type { Server as HTTPServer } from "http";
+import net from "node:net";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { join } from "path";
 import { hostname as getHostname } from "node:os";
@@ -60,6 +61,7 @@ type PendingConnection = {
 type WebSocketServerConfig = {
   allowedOrigins: Set<string>;
   allowedHosts?: AllowedHostsConfig;
+  requireLocalConnections?: boolean;
 };
 
 type WebSocketRuntimeMetrics = SessionRuntimeMetrics & CheckoutDiffMetrics;
@@ -358,7 +360,7 @@ export class VoiceAssistantWebSocketServer {
       this.broadcastAgentAttention(params);
     });
 
-    const { allowedOrigins, allowedHosts } = wsConfig;
+    const { allowedOrigins, allowedHosts, requireLocalConnections } = wsConfig;
     this.wss = new WebSocketServer({
       server,
       path: "/ws",
@@ -366,6 +368,17 @@ export class VoiceAssistantWebSocketServer {
         const requestMetadata = extractSocketRequestMetadata(req);
         const origin = requestMetadata.origin;
         const requestHost = requestMetadata.host ?? null;
+        if (
+          requireLocalConnections &&
+          !isLoopbackRemoteAddress(requestMetadata.remoteAddress)
+        ) {
+          this.logger.warn(
+            { ...requestMetadata },
+            "Rejected non-local direct websocket connection",
+          );
+          callback(false, 403, "Direct access is limited to local connections");
+          return;
+        }
         if (requestHost && !isHostAllowed(requestHost, allowedHosts)) {
           this.incrementRuntimeCounter("hostRejected");
           this.logger.warn(
@@ -1426,6 +1439,23 @@ function extractSocketRequestMetadata(request: unknown): SocketRequestMetadata {
     ...(userAgent ? { userAgent } : {}),
     ...(remoteAddress ? { remoteAddress } : {}),
   };
+}
+
+function isLoopbackRemoteAddress(remoteAddress: string | undefined): boolean {
+  if (!remoteAddress) {
+    return false;
+  }
+  const normalized = remoteAddress.trim();
+  if (!normalized) {
+    return false;
+  }
+  if (normalized === "::1") {
+    return true;
+  }
+  if (normalized.startsWith("::ffff:")) {
+    return normalized.slice("::ffff:".length) === "127.0.0.1";
+  }
+  return net.isIP(normalized) !== 0 && normalized === "127.0.0.1";
 }
 
 function stringifyCloseReason(reason: unknown): string | null {

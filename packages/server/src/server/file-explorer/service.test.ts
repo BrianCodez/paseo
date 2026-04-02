@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { listDirectoryEntries, readExplorerFile } from "./service.js";
+import { getDownloadableFileInfo, listDirectoryEntries, readExplorerFile } from "./service.js";
 
 async function createTempDir(prefix: string): Promise<string> {
   return mkdtemp(path.join(os.tmpdir(), prefix));
@@ -94,6 +94,46 @@ describe("file explorer service", () => {
       expect(result.mimeType).toBe("application/octet-stream");
     } finally {
       await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects symlinks that escape the workspace when reading files", async () => {
+    const root = await createTempDir("paseo-file-explorer-");
+    const outside = await createTempDir("paseo-file-explorer-outside-");
+
+    try {
+      await writeFile(path.join(outside, "secret.txt"), "top-secret\n", "utf-8");
+      await symlink(path.join(outside, "secret.txt"), path.join(root, "secret-link.txt"));
+
+      await expect(
+        readExplorerFile({
+          root,
+          relativePath: "secret-link.txt",
+        }),
+      ).rejects.toThrow("Access outside of workspace is not allowed");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects symlinks that escape the workspace when issuing download info", async () => {
+    const root = await createTempDir("paseo-file-explorer-");
+    const outside = await createTempDir("paseo-file-explorer-outside-");
+
+    try {
+      await writeFile(path.join(outside, "secret.txt"), "top-secret\n", "utf-8");
+      await symlink(path.join(outside, "secret.txt"), path.join(root, "secret-link.txt"));
+
+      await expect(
+        getDownloadableFileInfo({
+          root,
+          relativePath: "secret-link.txt",
+        }),
+      ).rejects.toThrow("Access outside of workspace is not allowed");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+      await rm(outside, { recursive: true, force: true });
     }
   });
 });

@@ -10,8 +10,10 @@ const wsModuleMock = vi.hoisted(() => {
   class MockWebSocketServer {
     static instances: MockWebSocketServer[] = [];
     readonly handlers = new Map<string, (...args: any[]) => void>();
+    readonly options: unknown;
 
-    constructor(_options: unknown) {
+    constructor(options: unknown) {
+      this.options = options;
       MockWebSocketServer.instances.push(this);
     }
 
@@ -145,7 +147,10 @@ function createLogger() {
   return logger;
 }
 
-function createServer(options?: { speechReadiness?: SpeechReadinessSnapshot | null }) {
+function createServer(options?: {
+  speechReadiness?: SpeechReadinessSnapshot | null;
+  requireLocalConnections?: boolean;
+}) {
   const speechReadiness = options?.speechReadiness ?? null;
   return new VoiceAssistantWebSocketServer(
     {} as any,
@@ -166,15 +171,19 @@ function createServer(options?: { speechReadiness?: SpeechReadinessSnapshot | nu
     {} as any,
     "/tmp/paseo-test",
     async () => ({}) as any,
-    { allowedOrigins: new Set() },
-    undefined,
-    undefined,
-    undefined,
+    {
+      allowedOrigins: new Set(),
+      ...(options?.requireLocalConnections ? { requireLocalConnections: true } : {}),
+    },
     speechReadiness
       ? {
-          getSpeechReadiness: () => speechReadiness,
+          getReadiness: () => speechReadiness,
+          onReadinessChange: vi.fn(() => () => {}),
         }
       : undefined,
+    undefined,
+    undefined,
+    undefined,
     undefined,
     TEST_DAEMON_VERSION,
     undefined,
@@ -195,6 +204,22 @@ function createServer(options?: { speechReadiness?: SpeechReadinessSnapshot | nu
       dispose: vi.fn(),
     } as any,
   );
+}
+
+function getVerifyClient():
+  | ((info: { req: unknown }, callback: (result: boolean, code?: number, reason?: string) => void) => void)
+  | null {
+  const instance = wsModuleMock.MockWebSocketServer.instances.at(-1);
+  if (!instance || typeof instance.options !== "object" || instance.options === null) {
+    return null;
+  }
+  const record = instance.options as {
+    verifyClient?: (
+      info: { req: unknown },
+      callback: (result: boolean, code?: number, reason?: string) => void,
+    ) => void;
+  };
+  return record.verifyClient ?? null;
 }
 
 function createReadySpeechReadinessSnapshot(): SpeechReadinessSnapshot {
@@ -391,6 +416,58 @@ describe("relay external socket reconnect behavior", () => {
     expect(closeCode).toBe(4001);
     expect(closeReason).toBe("Hello timeout");
     expect(sessionMock.instances).toHaveLength(0);
+
+    await server.close();
+  });
+
+  test("rejects non-local direct websocket connections when local-only mode is enabled", async () => {
+    const server = createServer({ requireLocalConnections: true });
+    const verifyClient = getVerifyClient();
+    expect(verifyClient).toBeTypeOf("function");
+
+    let accepted: boolean | null = null;
+    let statusCode: number | undefined;
+    let closeReason: string | undefined;
+    verifyClient?.(
+      {
+        req: {
+          headers: { host: "127.0.0.1:6767" },
+          socket: { remoteAddress: "100.64.0.8" },
+        },
+      },
+      (result, code, reason) => {
+        accepted = result;
+        statusCode = code;
+        closeReason = reason;
+      },
+    );
+
+    expect(accepted).toBe(false);
+    expect(statusCode).toBe(403);
+    expect(closeReason).toContain("local connections");
+
+    await server.close();
+  });
+
+  test("allows loopback direct websocket connections when local-only mode is enabled", async () => {
+    const server = createServer({ requireLocalConnections: true });
+    const verifyClient = getVerifyClient();
+    expect(verifyClient).toBeTypeOf("function");
+
+    let accepted: boolean | null = null;
+    verifyClient?.(
+      {
+        req: {
+          headers: { host: "127.0.0.1:6767" },
+          socket: { remoteAddress: "::ffff:127.0.0.1" },
+        },
+      },
+      (result) => {
+        accepted = result;
+      },
+    );
+
+    expect(accepted).toBe(true);
 
     await server.close();
   });

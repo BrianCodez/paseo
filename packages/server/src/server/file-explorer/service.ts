@@ -119,6 +119,7 @@ export async function readExplorerFile({
   root,
   relativePath,
 }: ReadFileParams): Promise<FileExplorerFile> {
+  const requestedPath = path.resolve(path.resolve(root), relativePath);
   const filePath = await resolveScopedPath({ root, relativePath });
   const stats = await fs.stat(filePath);
 
@@ -128,7 +129,7 @@ export async function readExplorerFile({
 
   const ext = path.extname(filePath).toLowerCase();
   const basePayload = {
-    path: normalizeRelativePath({ root, targetPath: filePath }),
+    path: normalizeRelativePath({ root, targetPath: requestedPath }),
     size: stats.size,
     modifiedAt: stats.mtime.toISOString(),
   };
@@ -170,6 +171,7 @@ export async function getDownloadableFileInfo({ root, relativePath }: ReadFilePa
   mimeType: string;
   size: number;
 }> {
+  const requestedPath = path.resolve(path.resolve(root), relativePath);
   const filePath = await resolveScopedPath({ root, relativePath });
   const stats = await fs.stat(filePath);
 
@@ -197,7 +199,7 @@ export async function getDownloadableFileInfo({ root, relativePath }: ReadFilePa
   }
 
   return {
-    path: normalizeRelativePath({ root, targetPath: filePath }),
+    path: normalizeRelativePath({ root, targetPath: requestedPath }),
     absolutePath: filePath,
     fileName: path.basename(filePath),
     mimeType,
@@ -207,11 +209,13 @@ export async function getDownloadableFileInfo({ root, relativePath }: ReadFilePa
 
 async function resolveScopedPath({ root, relativePath = "." }: ScopedPathParams): Promise<string> {
   const normalizedRoot = path.resolve(root);
-  const requestedPath = path.resolve(normalizedRoot, relativePath);
-  const relative = path.relative(normalizedRoot, requestedPath);
+  const canonicalRoot = await fs.realpath(normalizedRoot);
+  const requestedPath = path.resolve(canonicalRoot, relativePath);
+  const canonicalRequestedPath = await fs.realpath(requestedPath);
+  const relative = path.relative(canonicalRoot, canonicalRequestedPath);
 
   if (relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative))) {
-    return requestedPath;
+    return canonicalRequestedPath;
   }
 
   throw new Error("Access outside of workspace is not allowed");
@@ -223,7 +227,11 @@ async function buildEntryPayload({
   name,
   kind,
 }: EntryPayloadParams): Promise<FileExplorerEntry> {
-  const stats = await fs.stat(targetPath);
+  const scopedTargetPath = await resolveScopedPath({
+    root,
+    relativePath: normalizeRelativePath({ root, targetPath }),
+  });
+  const stats = await fs.stat(scopedTargetPath);
   return {
     name,
     path: normalizeRelativePath({ root, targetPath }),
